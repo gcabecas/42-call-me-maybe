@@ -1,5 +1,7 @@
 import json
 
+import numpy as np
+
 from llm_sdk import Small_LLM_Model
 from .input import Input
 
@@ -36,7 +38,7 @@ class Model():
                 rev_vocab[tok_id] = tok_str
 
         self.rev_vocab = rev_vocab
-        self.number_ids = number_ids
+        self.number_ids = np.array(number_ids, dtype=np.int32)
         self.bool_ids = bool_ids
         self.functions_desc = self._format_functions()
 
@@ -130,15 +132,18 @@ class Model():
             user_prompt, '{"name": "'
         )
 
+        # Compute base logits once — shared first-token position for all
+        base_logits = self.model.get_logits_from_input_ids(base_ids)
+
         best_name = fn_names[0]
         best_score = float('-inf')
 
         for name in fn_names:
-            score = 0.0
-            current_ids = list(base_ids)
             name_ids = self.model.encode(name)[0].tolist()
+            score = float(base_logits[name_ids[0]])
+            current_ids = base_ids + [name_ids[0]]
 
-            for tok_id in name_ids:
+            for tok_id in name_ids[1:]:
                 logits = self.model.get_logits_from_input_ids(current_ids)
                 score += logits[tok_id]
                 current_ids.append(tok_id)
@@ -159,26 +164,24 @@ class Model():
 
         for _ in range(15):
             logits = self.model.get_logits_from_input_ids(current_ids)
+            logits_arr = np.array(logits)
 
-            unconstrained_best = max(
-                range(len(logits)), key=lambda t: logits[t]
-            )
+            unconstrained_best = int(np.argmax(logits_arr))
             unconstrained_str = self.model.decode([unconstrained_best])
             if (self._is_complete_number(generated)
                     and unconstrained_str
                     and unconstrained_str[0] in terminators):
                 break
 
-            valid_ids = [
-                tid for tid in self.number_ids
-                if self._is_number_prefix(
-                    generated + self.rev_vocab[tid]
-                )
+            valid_ids = self.number_ids[
+                [self._is_number_prefix(
+                    generated + self.rev_vocab[int(tid)]
+                ) for tid in self.number_ids]
             ]
-            if not valid_ids:
+            if len(valid_ids) == 0:
                 break
 
-            best_id = max(valid_ids, key=lambda tid: logits[tid])
+            best_id = int(valid_ids[np.argmax(logits_arr[valid_ids])])
             generated += self.rev_vocab[best_id]
             current_ids.append(best_id)
 
@@ -194,7 +197,7 @@ class Model():
 
         for _ in range(100):
             logits = self.model.get_logits_from_input_ids(current_ids)
-            best_id = max(range(len(logits)), key=lambda t: logits[t])
+            best_id = int(np.argmax(logits))
             best_str = self.model.decode([best_id])
 
             if '\n' in best_str:
