@@ -1,10 +1,21 @@
 import argparse
 import json
-from .model import FunctionDefinition, Prompt
+from pydantic import BaseModel
+
+
+class Prompt(BaseModel):
+    prompt: str
+
+
+class FunctionDefinition(BaseModel):
+    name: str
+    description: str
+    parameters: dict[str, dict[str, str]]
+    returns: dict[str, str]
 
 
 class Input:
-    def __init__(self):
+    def __init__(self) -> None:
         self.parse_args()
         self.parse_functions_definition()
         self.parse_prompts()
