@@ -1,5 +1,6 @@
 import argparse
 import json
+from typing import Any
 from pydantic import BaseModel
 
 
@@ -42,7 +43,7 @@ class Input:
         self.args = parser.parse_args()
 
     @staticmethod
-    def read_json_file(file_path: str) -> dict:
+    def read_json_file(file_path: str) -> Any:
         with open(file_path, "r") as file:
             return json.load(file)
 

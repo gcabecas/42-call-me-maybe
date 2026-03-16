@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import numpy as np
 
@@ -96,7 +97,7 @@ class Model():
     def _build_params_prompt_ids(
             self,
             user_prompt: str,
-            partial_json: str) -> list[int]:
+            partial_json: str) -> Any:
 
         full_prompt = (
             "You are a high precision function decider and argument extractor."
@@ -200,7 +201,7 @@ class Model():
             generated += best_str
             current_ids.append(best_id)
 
-        return generated, current_ids
+        return generated.strip(), current_ids
 
     def _decode_boolean(
             self, input_ids: list[int]) -> tuple[bool, list[int]]:
@@ -229,7 +230,7 @@ class Model():
 
         return generated == "true", current_ids
 
-    def choose_function_call(self, prompt: str) -> dict:
+    def choose_function_call(self, prompt: str) -> dict[str, Any]:
         fn_name = self._decode_fn_name(prompt)
 
         fn_def = next(
@@ -240,12 +241,13 @@ class Model():
         prefix = f'{{"name": "{fn_name}", "parameters": {{'
         input_ids = self._build_params_prompt_ids(prompt, prefix)
 
-        parameters: dict = {}
+        parameters: dict[str, str | float | bool] = {}
         for i, (param_name, param_info) in enumerate(
             fn_def.parameters.items()
         ):
             sep = ", " if i > 0 else ""
             param_type = param_info.get("type", "string")
+            value: str | float | bool
 
             if param_type == "string":
                 input_ids = self._extend_ids(
@@ -273,5 +275,5 @@ class Model():
         return {"name": fn_name, "parameters": parameters}
 
     def _extend_ids(
-            self, input_ids: list[int], text: str) -> list[int]:
+            self, input_ids: Any, text: str) -> Any:
         return input_ids + self.model.encode(text)[0].tolist()

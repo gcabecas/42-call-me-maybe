@@ -1,6 +1,7 @@
 import json
 import os
 from sys import stderr, exit
+from typing import Any
 
 from src.input import Input
 from src.model import Model
@@ -14,7 +15,7 @@ def main() -> None:
         print(f"Error during setup: {e}", file=stderr)
         exit(1)
 
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
 
     for prompt in input_data.prompts:
         try:
