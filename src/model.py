@@ -42,6 +42,11 @@ class Model():
         self.bool_ids = bool_ids
         self.functions_desc = self._format_functions()
 
+        self._fn_name_token_ids: list[tuple[str, list[int]]] = [
+            (fn.name, self.model.encode(fn.name)[0].tolist())
+            for fn in self.input_data.functions_definition
+        ]
+
     @staticmethod
     def _is_number_token(tok: str) -> bool:
         return bool(tok) and all(c in "0123456789.eE+-" for c in tok)
@@ -92,69 +97,52 @@ class Model():
             self,
             user_prompt: str,
             partial_json: str) -> list[int]:
+
         full_prompt = (
-            "You are a function-calling assistant. "
-            "Extract the arguments from the user request.\n\n"
-            "Available functions:\n"
-            f"{self.functions_desc}\n\n"
+            "You are a high precision function decider and argument extractor."
+            f"here are the functions and descriptions:{self.functions_desc}\n"
+            "map the user request to a func using desc and exctract args.\n"
+            "words in prompt can match functionn name or fuction description"
             "Rules:\n"
-            "- Output ONLY the JSON object. "
-            "No explanation, no extra text.\n"
-            "- string values must be quoted.\n"
-            "- regex values must be valid Python regex patterns. "
-            "Use character classes, not literal values "
-            "(e.g. \"\\\\d+\" for digits, "
-            "\"[aeiouAEIOU]\" for vowels, "
-            "\"\\\\w+\" for words).\n\n"
-            "Examples:\n"
-            "User request: Say hello to Alice\n"
-            "JSON: {\"name\": \"fn_greet\", "
-            "\"parameters\": {\"name\": \"Alice\"}}\n\n"
-            "User request: Replace all numbers in 'foo 42 bar' with X\n"
-            "JSON: {\"name\": \"fn_substitute_string_with_regex\", "
-            "\"parameters\": {\"source_string\": \"foo 42 bar\", "
-            "\"regex\": \"\\\\d+\", \"replacement\": \"X\"}}\n\n"
-            "User request: Replace vowels in 'Hello' with *\n"
-            "JSON: {\"name\": \"fn_substitute_string_with_regex\", "
-            "\"parameters\": {\"source_string\": \"Hello\", "
-            "\"regex\": \"[aeiouAEIOU]\", "
-            "\"replacement\": \"*\"}}\n\n"
+            "- Output ONLY the JSON object, no extra text."
+            "- string values must be quoted."
+            "- regex: covers all category occurrences"
+            "- regex: bracket notation only, [0-9] instead of \\d,"
+            "- replacement: symbol word becomes the symbol, stripped."
+            "- number: use the lowest digits possible, no extra zeros or dot."
             f"User request: {user_prompt}\n"
-            f"JSON: {partial_json}"
-        )
+            f"JSON: {partial_json}")
+
         return self.model.encode(full_prompt)[0].tolist()
 
     def _decode_fn_name(self, user_prompt: str) -> str:
-        fn_names = [
-            fn.name for fn in self.input_data.functions_definition
-        ]
         base_ids = self._build_params_prompt_ids(
             user_prompt, '{"name": "'
         )
+        names = [n for n, _ in self._fn_name_token_ids]
+        tids = [t for _, t in self._fn_name_token_ids]
+        n = len(names)
+        scores: list[float] = [0.0] * n
+        max_depth = max(len(t) for t in tids)
 
-        # Compute base logits once — shared first-token position for all
-        base_logits = self.model.get_logits_from_input_ids(base_ids)
+        for depth in range(max_depth):
+            groups: dict[tuple[int, ...], list[int]] = {}
+            for i in range(n):
+                if depth < len(tids[i]):
+                    prefix = tuple(tids[i][:depth])
+                    groups.setdefault(prefix, []).append(i)
 
-        best_name = fn_names[0]
-        best_score = float('-inf')
+            if not groups:
+                break
 
-        for name in fn_names:
-            name_ids = self.model.encode(name)[0].tolist()
-            score = float(base_logits[name_ids[0]])
-            current_ids = base_ids + [name_ids[0]]
+            for prefix, idxs in groups.items():
+                ctx = base_ids + list(prefix)
+                logits = self.model.get_logits_from_input_ids(ctx)
+                for i in idxs:
+                    scores[i] += logits[tids[i][depth]]
 
-            for tok_id in name_ids[1:]:
-                logits = self.model.get_logits_from_input_ids(current_ids)
-                score += logits[tok_id]
-                current_ids.append(tok_id)
-
-            score /= max(len(name_ids), 1)
-
-            if score > best_score:
-                best_score = score
-                best_name = name
-
-        return best_name
+        best_i = max(range(n), key=lambda i: scores[i] / len(tids[i]))
+        return names[best_i]
 
     def _decode_number(
             self, input_ids: list[int]) -> tuple[float, list[int]]:
