@@ -69,6 +69,8 @@ This loop repeats until the full output is generated.
 
 Rather than generating the function name token-by-token freely, the system computes a **log-probability score** for each candidate function by evaluating the model's logits at each token position of the name. The function with the highest cumulative score is selected. This avoids any risk of the model generating a non-existent function name.
 
+A **confidence threshold** of `log(0.8)` is applied to the normalized score (average log-probability per token). If the best-scoring function falls below this threshold, the prompt is considered unmatched, a `ValueError` is raised, and the prompt is skipped. This was calibrated empirically: valid prompts score between -0.065 and ~0, while unrelated prompts score below -0.389.
+
 ### Parameter Decoding
 
 Each parameter is decoded according to its declared type:

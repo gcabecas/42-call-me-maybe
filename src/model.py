@@ -29,8 +29,9 @@ class Model():
     _MAX_STEPS: dict[str, int] = {"number": 15, "boolean": 10, "string": 20}
 
     @validate_call
-    def __init__(self, input_data: Input) -> None:
+    def __init__(self, input_data: Input, show: bool = False) -> None:
         self.input_data = input_data
+        self._show = show
         self._llm = Small_LLM_Model()
         self._load_vocab()
         self._build_fn_name_tokens()
@@ -219,13 +220,18 @@ class Model():
         """Selects the most likely function name using log-probability scoring.
 
         Scores each candidate function name by accumulating log-probabilities
-        at each token position, then returns the name with the highest score.
+        at each token position, then returns the name with the highest score,
+        provided it exceeds a confidence threshold of log(0.8).
 
         Args:
             base_ids: Token IDs of the prompt up to the function name position.
 
         Returns:
             The name of the most likely function to call.
+
+        Raises:
+            ValueError: If the best score is below log(0.8), meaning no
+                function matched the prompt with sufficient confidence.
         """
         scoring_base = base_ids + self._fn_common_prefix_ids
         scores = [0.0] * len(self._fn_names)
@@ -240,7 +246,13 @@ class Model():
                 for i in idxs:
                     tid = self._fn_tids_short[i][depth]
                     scores[i] += float(log_probs[tid])
-        return self._fn_names[int(np.argmax(scores))]
+        best_idx = int(np.argmax(scores))
+        n_tokens = len(self._fn_tids_short[best_idx])
+        confidence = scores[best_idx] / n_tokens
+        if confidence < np.log(0.8):
+            raise ValueError("No function matched the prompt")
+        self._last_confidence = confidence
+        return self._fn_names[best_idx]
 
     def _decode_number(self, input_ids: list[int]) -> tuple[float, list[int]]:
         """Decodes a number parameter using constrained token selection.
@@ -386,6 +398,8 @@ class Model():
             ValueError: If any parameter cannot be decoded within its token
             limit.
         """
+        if self._show:
+            print(f"Prompt: {prompt}")
         base_ids = self._build_prompt_ids(prompt)
         fn_name = self._decode_fn_name(base_ids)
         fn_def = self._fn_lookup[fn_name]
@@ -406,4 +420,8 @@ class Model():
                 value, input_ids = self._decode_string(input_ids)
             parameters[param_name] = value
 
-        return FunctionCall(name=fn_name, parameters=parameters)
+        result = FunctionCall(name=fn_name, parameters=parameters)
+        if self._show:
+            print(f"  -> {fn_name}{parameters} "
+                  f"(confidence: {self._last_confidence:.3f})")
+        return result
