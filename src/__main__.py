@@ -27,17 +27,17 @@ def main() -> None:
             print(f"Error on prompt '{prompt.prompt}': {e}", file=stderr)
             continue
 
-    output_path = input_data.output_path
-    try:
-        dir_name = os.path.dirname(output_path)
-        if dir_name:
-            os.makedirs(dir_name, exist_ok=True)
-        with open(output_path, "w") as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
-        print(f"Output written to: {output_path}")
-    except OSError as e:
-        print(f"Error writing output: {e}", file=stderr)
-        exit(1)
+    # output_path = input_data.output_path
+    # try:
+    #    dir_name = os.path.dirname(output_path)
+    #    if dir_name:
+    #        os.makedirs(dir_name, exist_ok=True)
+    #    with open(output_path, "w") as f:
+    #        json.dump(results, f, indent=2, ensure_ascii=False)
+    #    print(f"Output written to: {output_path}")
+    # except OSError as e:
+    #    print(f"Error writing output: {e}", file=stderr)
+    #    exit(1)
 
 
 if __name__ == "__main__":
