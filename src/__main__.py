@@ -1,7 +1,6 @@
 import json
 import os
 from sys import stderr, exit
-from typing import Any
 
 from src.input import Input
 from src.model import Model
@@ -15,13 +14,13 @@ def main() -> None:
         print(f"Error during setup: {e}", file=stderr)
         exit(1)
 
-    results: list[dict[str, Any]] = []
+    results: list[dict] = []
 
     for prompt in input_data.prompts:
         try:
             print(f"Processing prompt: {prompt.prompt}")
             function_call = model.choose_function_call(prompt.prompt)
-            results.append({"prompt": prompt.prompt, **function_call})
+            results.append({"prompt": prompt.prompt, **function_call.model_dump()})
             print(f"Result: {function_call}")
         except Exception as e:
             print(f"Error on prompt '{prompt.prompt}': {e}", file=stderr)
