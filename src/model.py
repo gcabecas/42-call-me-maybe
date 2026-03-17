@@ -5,7 +5,6 @@ from pydantic import BaseModel, validate_call
 from llm_sdk import Small_LLM_Model
 from .input import Input
 
-
 class FunctionCall(BaseModel):
     """Represents a structured function call produced by the model.
 
@@ -26,21 +25,19 @@ class Model():
         prompts.
     """
 
+    _MAX_STEPS: dict[str, int] = {"number": 15, "boolean": 10, "string": 20}
+
     @validate_call
     def __init__(self, input_data: Input) -> None:
-        """Initializes the model, loads the vocabulary, and precomputes token
-        data.
-
-        Args:
-            input_data: Validated input containing function definitions and
-            prompts.
-
-        Raises:
-            ValueError: If the vocabulary file cannot be found or parsed.
-        """
         self.input_data = input_data
         self._llm = Small_LLM_Model()
+        self._load_vocab()
+        self._build_fn_name_tokens()
+        self._build_fn_param_tokens()
 
+    def _load_vocab(self) -> None:
+        """Loads the vocabulary and categorizes tokens for numeric, boolean,
+        and reverse-lookup use."""
         vocab_path = self._llm.get_path_to_vocab_file()
         try:
             with open(vocab_path, "r") as f:
@@ -52,35 +49,31 @@ class Model():
         bool_ids: list[int] = []
         rev_vocab: dict[int, str] = {}
         for tok_str, tok_id in raw_vocab.items():
-            useful = False
-            if self._is_number_token(tok_str):
+            is_num = self._is_number_token(tok_str)
+            is_bool = any(lit.startswith(tok_str) for lit in ("true", "false"))
+            if is_num:
                 number_ids.append(tok_id)
-                useful = True
-            if any(lit.startswith(tok_str) for lit in ("true", "false")):
+            if is_bool:
                 bool_ids.append(tok_id)
-                useful = True
-            if useful:
+            if is_num or is_bool:
                 rev_vocab[tok_id] = tok_str
 
         self._rev_vocab = rev_vocab
         self._number_ids = np.array(number_ids, dtype=np.int32)
         self._bool_ids = bool_ids
 
+    def _build_fn_name_tokens(self) -> None:
+        """Precomputes function signatures, names, and token prefix data for
+        name decoding."""
         self._fn_sigs_str = ", ".join(
             "{}({})".format(
                 fn.name,
-                ", ".join(
-                    f"{k}: {v['type']}" for k, v in fn.parameters.items()
-                )
+                ", ".join(f"{k}: {v['type']}" for k, v in fn.parameters.items())
             )
             for fn in self.input_data.functions_definition
         )
-        self._fn_names = [
-            fn.name for fn in self.input_data.functions_definition
-        ]
-        _tids = [
-            self._llm.encode(name)[0].tolist() for name in self._fn_names
-        ]
+        self._fn_names = [fn.name for fn in self.input_data.functions_definition]
+        _tids = [self._llm.encode(name)[0].tolist() for name in self._fn_names]
         common_len = 0
         while (common_len < min(len(t) for t in _tids)
                and len({t[common_len] for t in _tids}) == 1):
@@ -95,6 +88,9 @@ class Model():
                     groups.setdefault(tuple(t[:depth]), []).append(i)
             self._fn_name_groups.append(groups)
 
+    def _build_fn_param_tokens(self) -> None:
+        """Precomputes preamble and parameter prefix token IDs for each
+        function."""
         self._fn_lookup = {
             fn.name: fn for fn in self.input_data.functions_definition
         }
@@ -109,13 +105,12 @@ class Model():
                 f'{{\"name\": \"{fn.name}\", \"parameters\": {{'
             )
             param_prefix_ids: list[list[int]] = []
-            for i, (param_name, param_info) in enumerate(
-                    fn.parameters.items()):
+            for i, (param_name, param_info) in enumerate(fn.parameters.items()):
                 sep = ", " if i > 0 else ""
-                suffix = '"' if param_info.get(
-                    "type", "string") == "string" else ""
-                param_prefix_ids.append(self._llm.encode(
-                    f'{sep}"{param_name}": {suffix}')[0].tolist())
+                suffix = '"' if param_info.get("type", "string") == "string" else ""
+                param_prefix_ids.append(
+                    self._llm.encode(f'{sep}"{param_name}": {suffix}')[0].tolist()
+                )
             self._fn_ids[fn.name] = (
                 self._llm.encode(preamble)[0].tolist(),
                 param_prefix_ids,
@@ -232,16 +227,12 @@ class Model():
                 logits_arr = np.array(
                     self._llm.get_logits_from_input_ids(
                         scoring_base + list(prefix)))
-                log_probs = logits_arr - (
-                    logits_arr.max()
-                    + np.log(np.sum(np.exp(logits_arr - logits_arr.max())))
-                )
+                m = logits_arr.max()
+                log_probs = logits_arr - m - np.log(np.sum(np.exp(logits_arr - m)))
                 for i in idxs:
                     tid = self._fn_tids_short[i][depth]
                     scores[i] += float(log_probs[tid])
-        return self._fn_names[
-            max(range(len(self._fn_names)), key=lambda i: scores[i])
-        ]
+        return self._fn_names[int(np.argmax(scores))]
 
     def _decode_number(self, input_ids: list[int]) -> tuple[float, list[int]]:
         """Decodes a number parameter using constrained token selection.
@@ -262,7 +253,8 @@ class Model():
         generated = ""
         current_ids = list(input_ids)
         terminators = set(',} \n\t"')
-        for _ in range(15):
+        terminated = False
+        for _ in range(self._MAX_STEPS["number"]):
             logits = self._llm.get_logits_from_input_ids(current_ids)
             logits_arr = np.array(logits)
             unconstrained_best = int(np.argmax(logits_arr))
@@ -270,6 +262,7 @@ class Model():
             if (self._is_complete_number(generated)
                     and unconstrained_str
                     and unconstrained_str[0] in terminators):
+                terminated = True
                 break
             valid_ids = self._number_ids[
                 [self._is_number_prefix(
@@ -277,10 +270,13 @@ class Model():
                 ) for tid in self._number_ids]
             ]
             if len(valid_ids) == 0:
+                terminated = True
                 break
             best_id = int(valid_ids[np.argmax(logits_arr[valid_ids])])
             generated += self._rev_vocab[best_id]
             current_ids.append(best_id)
+        if not terminated:
+            raise ValueError(f"Number decode hit token limit: {generated!r}")
         try:
             return float(generated), current_ids
         except ValueError:
@@ -307,7 +303,7 @@ class Model():
         generated = ""
         current_ids = list(input_ids)
         terminated = False
-        for _ in range(20):
+        for _ in range(self._MAX_STEPS["string"]):
             logits = self._llm.get_logits_from_input_ids(current_ids)
             best_id = int(np.argmax(logits))
             best_str = self._llm.decode([best_id])
@@ -345,7 +341,7 @@ class Model():
         generated = ""
         current_ids = list(input_ids)
         literals = ("true", "false")
-        for _ in range(10):
+        for _ in range(self._MAX_STEPS["boolean"]):
             valid_ids = [
                 tid for tid in self._bool_ids
                 if any(

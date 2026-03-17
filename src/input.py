@@ -1,7 +1,9 @@
 import argparse
 import json
+from sys import stderr
 from typing import Any
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import field_validator
 
 
 class Prompt(BaseModel):
@@ -11,7 +13,7 @@ class Prompt(BaseModel):
         prompt: The natural language request string.
     """
 
-    prompt: str
+    prompt: str = Field(min_length=1, max_length=100)
 
 
 class FunctionDefinition(BaseModel):
@@ -24,10 +26,25 @@ class FunctionDefinition(BaseModel):
         returns: The return type metadata of the function.
     """
 
-    name: str
+    name: str = Field(min_length=1, pattern=r'^[a-zA-Z_][a-zA-Z0-9_]*$')
     description: str
     parameters: dict[str, dict[str, str]]
     returns: dict[str, str]
+
+    @field_validator('parameters')
+    @classmethod
+    def validate_parameter_types(
+        cls, v: dict[str, dict[str, str]]
+    ) -> dict[str, dict[str, str]]:
+        valid_types = {"string", "number", "boolean"}
+        for param_name, param_info in v.items():
+            t = param_info.get('type', 'string')
+            if t not in valid_types:
+                raise ValueError(
+                    f"Parameter '{param_name}' has invalid type '{t}', "
+                    f"must be one of {valid_types}"
+                )
+        return v
 
 
 class Input(BaseModel):
@@ -41,8 +58,8 @@ class Input(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    functions_definition: list[FunctionDefinition]
-    prompts: list[Prompt]
+    functions_definition: list[FunctionDefinition] = Field(min_length=1)
+    prompts: list[Prompt] = Field(min_length=1)
     output_path: str
 
     @classmethod
@@ -152,7 +169,10 @@ class Input(BaseModel):
             ValueError: If the file is invalid or contains malformed prompts.
         """
         raw = cls._read_json_file(path)
-        try:
-            return [Prompt(**p) for p in raw]
-        except (ValidationError, TypeError) as e:
-            raise ValueError(f"Invalid prompt data in {path}: {e}")
+        prompts = []
+        for p in raw:
+            try:
+                prompts.append(Prompt(**p))
+            except (ValidationError, TypeError) as e:
+                print(f"Skipping invalid prompt: {e}", file=stderr)
+        return prompts
