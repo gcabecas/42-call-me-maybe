@@ -1,6 +1,5 @@
 import json
 from typing import Any
-
 import numpy as np
 
 from llm_sdk import Small_LLM_Model
@@ -40,14 +39,57 @@ class Model():
         self._fn_sigs_str: str = ", ".join(
             "{}({})".format(
                 fn.name,
-                ", ".join(f"{k}: {v['type']}" for k, v in fn.parameters.items())
+                ", ".join(
+                    f"{k}: {v['type']}" for k, v in fn.parameters.items()
+                )
             )
             for fn in self.input_data.functions_definition
         )
-        self._fn_name_token_ids: list[tuple[str, list[int]]] = [
-            (fn.name, self.model.encode(fn.name)[0].tolist())
-            for fn in self.input_data.functions_definition
+        self._fn_names: list[str] = [
+            fn.name for fn in self.input_data.functions_definition
         ]
+        _tids = [
+            self.model.encode(name)[0].tolist() for name in self._fn_names
+        ]
+        common_len = 0
+        while (common_len < min(len(t) for t in _tids)
+               and len({t[common_len] for t in _tids}) == 1):
+            common_len += 1
+        self._fn_common_prefix_ids: list[int] = _tids[0][:common_len]
+        self._fn_tids_short: list[list[int]] = [t[common_len:] for t in _tids]
+        self._fn_name_groups: list[dict[tuple[int, ...], list[int]]] = []
+        for depth in range(max(len(t) for t in self._fn_tids_short)):
+            groups: dict[tuple[int, ...], list[int]] = {}
+            for i, t in enumerate(self._fn_tids_short):
+                if depth < len(t):
+                    groups.setdefault(tuple(t[:depth]), []).append(i)
+            self._fn_name_groups.append(groups)
+
+        self._fn_lookup = {
+            fn.name: fn for fn in self.input_data.functions_definition
+        }
+        self._fn_ids: dict[str, tuple[list[int], list[list[int]]]] = {}
+        for fn in self.input_data.functions_definition:
+            hint = (
+                "\nregex: [bracket] notation, replacement: exact symbol"
+                if fn.name == "fn_substitute_string_with_regex" else ""
+            )
+            preamble = (
+                f"fn_name: {fn.name}{hint}\n"
+                f'{{\"name\": \"{fn.name}\", \"parameters\": {{'
+            )
+            param_prefix_ids: list[list[int]] = []
+            for i, (param_name, param_info) in enumerate(
+                    fn.parameters.items()):
+                sep = ", " if i > 0 else ""
+                suffix = '"' if param_info.get(
+                    "type", "string") == "string" else ""
+                param_prefix_ids.append(self.model.encode(
+                    f'{sep}"{param_name}": {suffix}')[0].tolist())
+            self._fn_ids[fn.name] = (
+                self.model.encode(preamble)[0].tolist(),
+                param_prefix_ids,
+            )
 
     @staticmethod
     def _is_number_token(tok: str) -> bool:
@@ -97,27 +139,23 @@ class Model():
         return self.model.encode(prompt)[0].tolist()
 
     def _decode_fn_name(self, base_ids: list[int]) -> str:
-        names = [n for n, _ in self._fn_name_token_ids]
-        tids = [t for _, t in self._fn_name_token_ids]
-        scores = [0.0] * len(names)
-
-        for depth in range(max(len(t) for t in tids)):
-            groups: dict[tuple[int, ...], list[int]] = {}
-            for i, t in enumerate(tids):
-                if depth < len(t):
-                    groups.setdefault(tuple(t[:depth]), []).append(i)
+        scoring_base = base_ids + self._fn_common_prefix_ids
+        scores = [0.0] * len(self._fn_names)
+        for depth, groups in enumerate(self._fn_name_groups):
             for prefix, idxs in groups.items():
                 logits_arr = np.array(
                     self.model.get_logits_from_input_ids(
-                        base_ids + list(prefix)))
+                        scoring_base + list(prefix)))
                 log_probs = logits_arr - (
                     logits_arr.max()
                     + np.log(np.sum(np.exp(logits_arr - logits_arr.max())))
                 )
                 for i in idxs:
-                    scores[i] += float(log_probs[tids[i][depth]])
-
-        return names[max(range(len(names)), key=lambda i: scores[i])]
+                    tid = self._fn_tids_short[i][depth]
+                    scores[i] += float(log_probs[tid])
+        return self._fn_names[
+            max(range(len(self._fn_names)), key=lambda i: scores[i])
+        ]
 
     def _decode_number(self, input_ids: list[int]) -> tuple[float, list[int]]:
         generated = ""
@@ -150,7 +188,7 @@ class Model():
     def _decode_string(self, input_ids: list[int]) -> tuple[str, list[int]]:
         generated = ""
         current_ids = list(input_ids)
-        for _ in range(100):
+        for _ in range(20):
             logits = self.model.get_logits_from_input_ids(current_ids)
             best_id = int(np.argmax(logits))
             best_str = self.model.decode([best_id])
@@ -187,44 +225,24 @@ class Model():
                 break
         return generated == "true", current_ids
 
-    def _extend_ids(self, input_ids: Any, text: str) -> Any:
-        return input_ids + self.model.encode(text)[0].tolist()
-
     def choose_function_call(self, prompt: str) -> dict[str, Any]:
         base_ids = self._build_prompt_ids(prompt)
         fn_name = self._decode_fn_name(base_ids)
-
-        fn_def = next(
-            fn for fn in self.input_data.functions_definition
-            if fn.name == fn_name
-        )
-        hint = (
-            "\nregex: [bracket] notation, replacement: exact symbol"
-            if fn_name == "fn_substitute_string_with_regex" else ""
-        )
-        input_ids = self._extend_ids(
-            base_ids,
-            f"fn_name: {fn_name}{hint}\n"
-            f'{{\"name\": \"{fn_name}\", \"parameters\": {{'
-        )
+        fn_def = self._fn_lookup[fn_name]
+        preamble_ids, param_prefix_ids = self._fn_ids[fn_name]
+        input_ids = base_ids + preamble_ids
 
         parameters: dict[str, str | float | bool] = {}
-        for i, (param_name, param_info) in enumerate(
-                fn_def.parameters.items()):
-            sep = ", " if i > 0 else ""
+        for (param_name, param_info), prefix_ids in zip(
+                fn_def.parameters.items(), param_prefix_ids):
+            input_ids = input_ids + prefix_ids
             param_type = param_info.get("type", "string")
             value: str | float | bool
             if param_type == "number":
-                input_ids = self._extend_ids(
-                    input_ids, f'{sep}"{param_name}": ')
                 value, input_ids = self._decode_number(input_ids)
             elif param_type == "boolean":
-                input_ids = self._extend_ids(
-                    input_ids, f'{sep}"{param_name}": ')
                 value, input_ids = self._decode_boolean(input_ids)
             else:
-                input_ids = self._extend_ids(
-                    input_ids, f'{sep}"{param_name}": "')
                 value, input_ids = self._decode_string(input_ids)
             parameters[param_name] = value
 
