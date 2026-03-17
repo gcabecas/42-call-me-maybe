@@ -15,7 +15,7 @@ def main() -> None:
     """
     try:
         input_data = Input.from_cli()
-        model = Model(input_data, True)
+        model = Model(input_data)
     except Exception as e:
         print(f"Error during setup: {e}", file=stderr)
         exit(1)
