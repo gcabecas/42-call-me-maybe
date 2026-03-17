@@ -20,14 +20,12 @@ def main() -> None:
         print(f"Error during setup: {e}", file=stderr)
         exit(1)
 
-    results: list[dict] = []
+    results: list[dict[str, object]] = []
 
     for prompt in input_data.prompts:
         try:
-            print(f"Processing prompt: {prompt.prompt}")
-            function_call = model.choose_function_call(prompt.prompt)
-            results.append({"prompt": prompt.prompt, **function_call.model_dump()})
-            print(f"Result: {function_call}")
+            func_call = model.choose_function_call(prompt.prompt)
+            results.append({"prompt": prompt.prompt, **func_call.model_dump()})
         except Exception as e:
             print(f"Error on prompt '{prompt.prompt}': {e}", file=stderr)
             continue

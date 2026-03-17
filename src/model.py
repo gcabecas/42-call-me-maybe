@@ -1,5 +1,4 @@
 import json
-from typing import Any
 import numpy as np
 from pydantic import BaseModel, validate_call
 
@@ -23,15 +22,18 @@ class Model():
     """Loads the LLM and vocabulary, and performs constrained decoding.
 
     Attributes:
-        input_data: The validated input containing function definitions and prompts.
+        input_data: The validated input containing function definitions and
+        prompts.
     """
 
     @validate_call
     def __init__(self, input_data: Input) -> None:
-        """Initializes the model, loads the vocabulary, and precomputes token data.
+        """Initializes the model, loads the vocabulary, and precomputes token
+        data.
 
         Args:
-            input_data: Validated input containing function definitions and prompts.
+            input_data: Validated input containing function definitions and
+            prompts.
 
         Raises:
             ValueError: If the vocabulary file cannot be found or parsed.
@@ -202,7 +204,8 @@ class Model():
             A list of token IDs representing the full prompt.
         """
         prompt = (
-            f"<|im_start|>system find the correct function call and re arguments\n"
+            f"<|im_start|>system find the correct function call and re"
+            f"arguments\n"
             f"{self._fn_sigs_str}\n"
             f"{user_prompt}<|im_end|>\n"
             f"<|im_start|>assistant\n"
@@ -284,7 +287,8 @@ class Model():
             raise ValueError(f"Failed to decode number: {generated!r}")
 
     def _decode_string(self, input_ids: list[int]) -> tuple[str, list[int]]:
-        """Decodes a string parameter by generating tokens until a closing quote.
+        """Decodes a string parameter by generating tokens until a closing
+        quote.
 
         Stops when an unescaped `"` or a newline is encountered. Raises if
         the token limit is reached without a proper termination.
@@ -362,7 +366,8 @@ class Model():
         return generated == "true", current_ids
 
     def choose_function_call(self, prompt: str) -> FunctionCall:
-        """Translates a natural language prompt into a structured function call.
+        """Translates a natural language prompt into a structured function
+        call.
 
         Selects the best matching function using log-probability scoring, then
         decodes each parameter using type-aware constrained decoding.
@@ -374,7 +379,8 @@ class Model():
             A FunctionCall containing the function name and decoded parameters.
 
         Raises:
-            ValueError: If any parameter cannot be decoded within its token limit.
+            ValueError: If any parameter cannot be decoded within its token
+            limit.
         """
         base_ids = self._build_prompt_ids(prompt)
         fn_name = self._decode_fn_name(base_ids)

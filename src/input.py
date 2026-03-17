@@ -47,7 +47,8 @@ class Input(BaseModel):
 
     @classmethod
     def from_cli(cls) -> "Input":
-        """Creates an Input instance by parsing CLI arguments and loading files.
+        """Creates an Input instance by parsing CLI arguments and loading
+        files.
 
         Returns:
             A validated Input instance populated from CLI arguments.
@@ -69,7 +70,8 @@ class Input(BaseModel):
         """Parses command-line arguments.
 
         Returns:
-            A namespace with `functions_definition`, `input`, and `output` paths.
+            A namespace with `functions_definition`, `input`, and `output`
+            paths.
         """
         parser = argparse.ArgumentParser(description="Call Me Maybe")
         parser.add_argument(
