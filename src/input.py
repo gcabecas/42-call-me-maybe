@@ -1,7 +1,7 @@
 import argparse
 import json
 from typing import Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 
 class Prompt(BaseModel):
@@ -15,16 +15,27 @@ class FunctionDefinition(BaseModel):
     returns: dict[str, str]
 
 
-class Input:
-    def __init__(self) -> None:
-        self.parse_args()
-        self.parse_functions_definition()
-        self.parse_prompts()
+class Input(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def parse_args(self) -> None:
-        parser = argparse.ArgumentParser(
-            description=("Call Me Maybe")
+    functions_definition: list[FunctionDefinition]
+    prompts: list[Prompt]
+    output_path: str
+
+    @classmethod
+    def from_cli(cls) -> "Input":
+        args = cls._parse_args()
+        functions_definition = cls._load_functions(args.functions_definition)
+        prompts = cls._load_prompts(args.input)
+        return cls(
+            functions_definition=functions_definition,
+            prompts=prompts,
+            output_path=args.output,
         )
+
+    @staticmethod
+    def _parse_args() -> argparse.Namespace:
+        parser = argparse.ArgumentParser(description="Call Me Maybe")
         parser.add_argument(
             "--functions_definition",
             default="data/input/functions_definition.json",
@@ -37,24 +48,38 @@ class Input:
         )
         parser.add_argument(
             "--output",
-            default="data/output/function_calls.json",
+            default="data/output/function_calling_results.json",
             help="Path to the output JSON file.",
         )
-        self.args = parser.parse_args()
+        return parser.parse_args()
 
     @staticmethod
-    def read_json_file(file_path: str) -> Any:
-        with open(file_path, "r") as file:
-            return json.load(file)
+    def _read_json_file(file_path: str) -> Any:
+        try:
+            with open(file_path, "r") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            raise ValueError(f"File not found: {file_path}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in {file_path}: {e}")
+        except OSError as e:
+            raise ValueError(f"Cannot read {file_path}: {e}")
 
-    def parse_functions_definition(self) -> None:
-        raw_functions = self.read_json_file(self.args.functions_definition)
-        self.functions_definition = []
-        for func in raw_functions:
-            self.functions_definition.append(FunctionDefinition(**func))
+    @classmethod
+    def _load_functions(cls, path: str) -> list[FunctionDefinition]:
+        raw = cls._read_json_file(path)
+        try:
+            result = [FunctionDefinition(**fn) for fn in raw]
+        except (ValidationError, TypeError) as e:
+            raise ValueError(f"Invalid function definition in {path}: {e}")
+        if not result:
+            raise ValueError(f"No function definitions found in {path}")
+        return result
 
-    def parse_prompts(self) -> None:
-        raw_prompts = self.read_json_file(self.args.input)
-        self.prompts = []
-        for prompt in raw_prompts:
-            self.prompts.append(Prompt(**prompt))
+    @classmethod
+    def _load_prompts(cls, path: str) -> list[Prompt]:
+        raw = cls._read_json_file(path)
+        try:
+            return [Prompt(**p) for p in raw]
+        except (ValidationError, TypeError) as e:
+            raise ValueError(f"Invalid prompt data in {path}: {e}")
