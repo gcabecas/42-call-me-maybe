@@ -15,7 +15,7 @@ def main() -> None:
     """
     try:
         input_data = Input.from_cli()
-        model = Model(input_data)
+        model = Model(input_data, True)
     except Exception as e:
         print(f"Error during setup: {e}", file=stderr)
         exit(1)
@@ -38,7 +38,7 @@ def main() -> None:
         with open(output_path, "w") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
         print(f"Output written to: {output_path}")
-    except OSError as e:
+    except Exception as e:
         print(f"Error writing output: {e}", file=stderr)
         exit(1)
 

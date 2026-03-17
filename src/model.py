@@ -418,6 +418,24 @@ class Model():
                 value, input_ids = self._decode_boolean(input_ids)
             else:
                 value, input_ids = self._decode_string(input_ids)
+                if isinstance(value, str) and (
+                    value in (param_type, param_name)
+                    or value.strip("'\"") == ""
+                    or (
+                        ("''" in prompt or '""' in prompt)
+                        and len(value.split()) >= 3
+                        and set(
+                            ''.join(
+                                c if c.isalnum() else ' ' for c in value
+                            ).lower().split()
+                        ) <= set(
+                            ''.join(
+                                c if c.isalnum() else ' ' for c in prompt
+                            ).lower().split()
+                        )
+                    )
+                ):
+                    value = ""
             parameters[param_name] = value
 
         result = FunctionCall(name=fn_name, parameters=parameters)
