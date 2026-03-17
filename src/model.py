@@ -5,6 +5,7 @@ from pydantic import BaseModel, validate_call
 from llm_sdk import Small_LLM_Model
 from .input import Input
 
+
 class FunctionCall(BaseModel):
     """Represents a structured function call produced by the model.
 
@@ -68,11 +69,14 @@ class Model():
         self._fn_sigs_str = ", ".join(
             "{}({})".format(
                 fn.name,
-                ", ".join(f"{k}: {v['type']}" for k, v in fn.parameters.items())
+                ", ".join(
+                    f"{k}: {v['type']}" for k, v in fn.parameters.items()
+                )
             )
             for fn in self.input_data.functions_definition
         )
-        self._fn_names = [fn.name for fn in self.input_data.functions_definition]
+        self._fn_names = [
+            fn.name for fn in self.input_data.functions_definition]
         _tids = [self._llm.encode(name)[0].tolist() for name in self._fn_names]
         common_len = 0
         while (common_len < min(len(t) for t in _tids)
@@ -105,12 +109,15 @@ class Model():
                 f'{{\"name\": \"{fn.name}\", \"parameters\": {{'
             )
             param_prefix_ids: list[list[int]] = []
-            for i, (param_name, param_info) in enumerate(fn.parameters.items()):
+            for i, (param_name, param_info) in enumerate(
+                    fn.parameters.items()):
                 sep = ", " if i > 0 else ""
-                suffix = '"' if param_info.get("type", "string") == "string" else ""
+                suffix = '"' if param_info.get(
+                    "type", "string") == "string" else ""
                 param_prefix_ids.append(
-                    self._llm.encode(f'{sep}"{param_name}": {suffix}')[0].tolist()
-                )
+                    self._llm.encode(
+                        f'{sep}"{param_name}": {suffix}'
+                    )[0].tolist())
             self._fn_ids[fn.name] = (
                 self._llm.encode(preamble)[0].tolist(),
                 param_prefix_ids,
@@ -228,7 +235,8 @@ class Model():
                     self._llm.get_logits_from_input_ids(
                         scoring_base + list(prefix)))
                 m = logits_arr.max()
-                log_probs = logits_arr - m - np.log(np.sum(np.exp(logits_arr - m)))
+                log_probs = logits_arr - m - \
+                    np.log(np.sum(np.exp(logits_arr - m)))
                 for i in idxs:
                     tid = self._fn_tids_short[i][depth]
                     scores[i] += float(log_probs[tid])
