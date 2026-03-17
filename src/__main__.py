@@ -7,6 +7,12 @@ from src.model import Model
 
 
 def main() -> None:
+    """Runs the function-calling pipeline from CLI arguments to output file.
+
+    Loads input data and the model, processes each prompt with constrained
+    decoding, and writes the results as a JSON array. Errors on individual
+    prompts are logged and skipped; setup errors exit with code 1.
+    """
     try:
         input_data = Input.from_cli()
         model = Model(input_data)

@@ -8,13 +8,34 @@ from .input import Input
 
 
 class FunctionCall(BaseModel):
+    """Represents a structured function call produced by the model.
+
+    Attributes:
+        name: The name of the function to call.
+        parameters: A mapping of parameter names to their typed values.
+    """
+
     name: str
     parameters: dict[str, str | float | bool]
 
 
 class Model():
+    """Loads the LLM and vocabulary, and performs constrained decoding.
+
+    Attributes:
+        input_data: The validated input containing function definitions and prompts.
+    """
+
     @validate_call
-    def __init__(self, input_data: Input):
+    def __init__(self, input_data: Input) -> None:
+        """Initializes the model, loads the vocabulary, and precomputes token data.
+
+        Args:
+            input_data: Validated input containing function definitions and prompts.
+
+        Raises:
+            ValueError: If the vocabulary file cannot be found or parsed.
+        """
         self.input_data = input_data
         self._llm = Small_LLM_Model()
 
@@ -100,10 +121,27 @@ class Model():
 
     @staticmethod
     def _is_number_token(tok: str) -> bool:
+        """Checks whether a token string consists only of numeric characters.
+
+        Args:
+            tok: The token string to check.
+
+        Returns:
+            True if the token is non-empty and contains only digits or numeric
+            symbols (`.`, `e`, `E`, `+`, `-`).
+        """
         return bool(tok) and all(c in "0123456789.eE+-" for c in tok)
 
     @staticmethod
     def _is_number_prefix(s: str) -> bool:
+        """Checks whether a string is a valid prefix of a float literal.
+
+        Args:
+            s: The string to check.
+
+        Returns:
+            True if the string could be the beginning of a valid float number.
+        """
         if not s or s == '-':
             return True
         if s[0] not in '-0123456789':
@@ -117,6 +155,14 @@ class Model():
 
     @staticmethod
     def _is_complete_number(s: str) -> bool:
+        """Checks whether a string is a complete, parseable float.
+
+        Args:
+            s: The string to check.
+
+        Returns:
+            True if the string can be parsed as a float.
+        """
         try:
             float(s)
             return True
@@ -125,6 +171,14 @@ class Model():
 
     @staticmethod
     def _unescaped_quote_idx(s: str) -> int | None:
+        """Finds the index of the first unescaped double-quote in a string.
+
+        Args:
+            s: The string to search.
+
+        Returns:
+            The index of the first unescaped `"`, or None if not found.
+        """
         i = 0
         while i < len(s):
             if s[i] == '\\':
@@ -136,8 +190,19 @@ class Model():
         return None
 
     def _build_prompt_ids(self, user_prompt: str) -> list[int]:
+        """Builds the token ID sequence for the full prompt.
+
+        Formats the prompt in ChatML style with function signatures and
+        the user request, then encodes it into token IDs.
+
+        Args:
+            user_prompt: The natural language prompt from the user.
+
+        Returns:
+            A list of token IDs representing the full prompt.
+        """
         prompt = (
-            f"<|im_start|>find the correct function call and re arguments\n"
+            f"<|im_start|>system find the correct function call and re arguments\n"
             f"{self._fn_sigs_str}\n"
             f"{user_prompt}<|im_end|>\n"
             f"<|im_start|>assistant\n"
@@ -146,6 +211,17 @@ class Model():
         return self._llm.encode(prompt)[0].tolist()
 
     def _decode_fn_name(self, base_ids: list[int]) -> str:
+        """Selects the most likely function name using log-probability scoring.
+
+        Scores each candidate function name by accumulating log-probabilities
+        at each token position, then returns the name with the highest score.
+
+        Args:
+            base_ids: Token IDs of the prompt up to the function name position.
+
+        Returns:
+            The name of the most likely function to call.
+        """
         scoring_base = base_ids + self._fn_common_prefix_ids
         scores = [0.0] * len(self._fn_names)
         for depth, groups in enumerate(self._fn_name_groups):
@@ -165,6 +241,21 @@ class Model():
         ]
 
     def _decode_number(self, input_ids: list[int]) -> tuple[float, list[int]]:
+        """Decodes a number parameter using constrained token selection.
+
+        At each step, only tokens that extend a valid numeric prefix are
+        allowed. Stops when the model selects a terminator after a complete
+        number, or when no valid tokens remain.
+
+        Args:
+            input_ids: Current token ID sequence up to the parameter position.
+
+        Returns:
+            A tuple of (decoded float value, updated token ID sequence).
+
+        Raises:
+            ValueError: If the generated string cannot be parsed as a float.
+        """
         generated = ""
         current_ids = list(input_ids)
         terminators = set(',} \n\t"')
@@ -193,6 +284,22 @@ class Model():
             raise ValueError(f"Failed to decode number: {generated!r}")
 
     def _decode_string(self, input_ids: list[int]) -> tuple[str, list[int]]:
+        """Decodes a string parameter by generating tokens until a closing quote.
+
+        Stops when an unescaped `"` or a newline is encountered. Raises if
+        the token limit is reached without a proper termination.
+
+        Args:
+            input_ids: Current token ID sequence up to the parameter position.
+
+        Returns:
+            A tuple of (decoded string value stripped of whitespace,
+            updated token ID sequence).
+
+        Raises:
+            ValueError: If the token limit is reached without finding a
+                closing quote or newline.
+        """
         generated = ""
         current_ids = list(input_ids)
         terminated = False
@@ -216,6 +323,21 @@ class Model():
         return generated.strip(), current_ids
 
     def _decode_boolean(self, input_ids: list[int]) -> tuple[bool, list[int]]:
+        """Decodes a boolean parameter constrained to 'true' or 'false'.
+
+        At each step, only tokens that extend a valid prefix of 'true' or
+        'false' are allowed. Raises if a complete literal is not reached.
+
+        Args:
+            input_ids: Current token ID sequence up to the parameter position.
+
+        Returns:
+            A tuple of (decoded boolean value, updated token ID sequence).
+
+        Raises:
+            ValueError: If the token limit is reached without generating
+                a complete 'true' or 'false' literal.
+        """
         generated = ""
         current_ids = list(input_ids)
         literals = ("true", "false")
@@ -240,6 +362,20 @@ class Model():
         return generated == "true", current_ids
 
     def choose_function_call(self, prompt: str) -> FunctionCall:
+        """Translates a natural language prompt into a structured function call.
+
+        Selects the best matching function using log-probability scoring, then
+        decodes each parameter using type-aware constrained decoding.
+
+        Args:
+            prompt: The natural language request to process.
+
+        Returns:
+            A FunctionCall containing the function name and decoded parameters.
+
+        Raises:
+            ValueError: If any parameter cannot be decoded within its token limit.
+        """
         base_ids = self._build_prompt_ids(prompt)
         fn_name = self._decode_fn_name(base_ids)
         fn_def = self._fn_lookup[fn_name]
