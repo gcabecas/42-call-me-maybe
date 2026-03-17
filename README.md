@@ -150,7 +150,7 @@ Output file (`data/output/function_calling_results.json`):
 
 ### AI Usage
 AI was used in this project for:
-- **Understanding concepts**: clarifying how constrained decoding works, how tokenizers handle subword units, and how logit masking can be applied at each generation step.
+- **Understanding concepts**: clarifying how constrained decoding works, how tokenizers handle subword units.
 - **Documentation**: assistance in writing and structuring this README.
 
 All generated content was reviewed, tested, and fully understood before being included in the project.
