@@ -33,10 +33,9 @@ make run
 
 **Run with custom input/output paths:**
 ```bash
-uv run python -m src \
-  --functions_definition data/input/functions_definition.json \
-  --input data/input/function_calling_tests.json \
-  --output data/output/function_calling_results.json
+make run INPUT=data/input/my_prompts.json
+make run OUTPUT=data/output/results.json
+make run INPUT=a.json OUTPUT=b.json FUNCTIONS=funcs.json
 ```
 
 **Other Makefile targets:**
@@ -50,7 +49,7 @@ uv run python -m src \
 | `make lint` | Run `flake8` + `mypy` with standard flags |
 | `make lint-strict` | Run `flake8` + `mypy --strict` |
 
-Input files must be placed in `data/input/`. Output is written to `data/output/function_calling_results.json`.
+Default paths: input files in `data/input/`, output to `data/output/function_calling_results.json`. Override any path with Make variables (`INPUT`, `OUTPUT`, `FUNCTIONS`).
 
 ## Algorithm Explanation
 

@@ -3,11 +3,15 @@
 install:
 	uv sync
 
+INPUT     ?= data/input/function_calling_tests.json
+OUTPUT    ?= data/output/function_calling_results.json
+FUNCTIONS ?= data/input/functions_definition.json
+
 run:
-	uv run python -m src
+	uv run python -m src --input $(INPUT) --output $(OUTPUT) --functions_definition $(FUNCTIONS)
 
 debug:
-	uv run python -m pdb -m src
+	uv run python -m pdb -m src --input $(INPUT) --output $(OUTPUT) --functions_definition $(FUNCTIONS)
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +

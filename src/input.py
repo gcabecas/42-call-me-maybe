@@ -65,8 +65,7 @@ class Input(BaseModel):
 
     @classmethod
     def from_cli(cls) -> "Input":
-        """Creates an Input instance by parsing CLI arguments and loading
-        files.
+        """Creates an Input instance from CLI arguments and files.
 
         Returns:
             A validated Input instance populated from CLI arguments.

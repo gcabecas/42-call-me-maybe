@@ -22,8 +22,8 @@ class Model():
     """Loads the LLM and vocabulary, and performs constrained decoding.
 
     Attributes:
-        input_data: The validated input containing function definitions and
-        prompts.
+        input_data: The validated input containing function definitions
+            and prompts.
     """
 
     _MAX_STEPS: dict[str, int] = {"number": 15, "boolean": 10, "string": 20}
@@ -38,8 +38,10 @@ class Model():
         self._build_fn_param_tokens()
 
     def _load_vocab(self) -> None:
-        """Loads the vocabulary and categorizes tokens for numeric, boolean,
-        and reverse-lookup use."""
+        """Loads and categorizes vocabulary tokens.
+
+        Populates numeric, boolean, and reverse-lookup token structures.
+        """
         vocab_path = self._llm.get_path_to_vocab_file()
         try:
             with open(vocab_path, "r") as f:
@@ -65,11 +67,23 @@ class Model():
         self._bool_ids = bool_ids
 
     def _build_fn_name_tokens(self) -> None:
-        """Precomputes function signatures, names, and token prefix data for
-        name decoding."""
+        """Precomputes function signatures, names, and token prefix data.
+
+        Data structures are used for constrained function name decoding.
+        """
         self._fn_sigs_str = ", ".join(
             "{}({})".format(
                 fn.name,
+                ", ".join(
+                    f"{k}: {v['type']}" for k, v in fn.parameters.items()
+                )
+            )
+            for fn in self.input_data.functions_definition
+        )
+        self._fn_sigs_str_verbose = ", ".join(
+            "{} [{}]({})".format(
+                fn.name,
+                fn.description,
                 ", ".join(
                     f"{k}: {v['type']}" for k, v in fn.parameters.items()
                 )
@@ -94,17 +108,28 @@ class Model():
             self._fn_name_groups.append(groups)
 
     def _build_fn_param_tokens(self) -> None:
-        """Precomputes preamble and parameter prefix token IDs for each
-        function."""
+        """Precomputes preamble and parameter prefix token IDs.
+
+        Builds lookup data per function for constrained parameter decoding.
+        """
         self._fn_lookup = {
             fn.name: fn for fn in self.input_data.functions_definition
         }
         self._fn_ids = {}
         for fn in self.input_data.functions_definition:
-            hint = (
-                "\nregex: [bracket] notation, replacement: exact symbol"
-                if fn.name == "fn_substitute_string_with_regex" else ""
-            )
+            if fn.name == "fn_substitute_string_with_regex":
+                hint = "\nregex: [bracket] notation, replacement: exact symbol"
+            elif fn.name == "fn_format_template":
+                hint = (
+                    "<|im_end|>\n"
+                    "<|im_start|>system\n"
+                    "don't think about the meaning of the template, never"
+                    " rewrite it\n if there is 'Format template:' in output, "
+                    "remove it even if it destroy the meaning\n"
+                    "<|im_end|>\n"
+                    "<|im_start|>assistant\n")
+            else:
+                hint = ""
             preamble = (
                 f"fn_name: {fn.name}{hint}\n"
                 f'{{\"name\": \"{fn.name}\", \"parameters\": {{'
@@ -123,6 +148,14 @@ class Model():
                 self._llm.encode(preamble)[0].tolist(),
                 param_prefix_ids,
             )
+
+    @staticmethod
+    def _value_in_prompt(value: str | float | int | bool, prompt: str) -> bool:
+        if isinstance(value, bool):
+            return str(value).lower() in prompt.lower()
+        if isinstance(value, (int, float)):
+            return str(value) in prompt or str(int(value)) in prompt
+        return bool(value) and str(value) in prompt
 
     @staticmethod
     def _is_number_token(tok: str) -> bool:
@@ -194,7 +227,10 @@ class Model():
             i += 1
         return None
 
-    def _build_prompt_ids(self, user_prompt: str) -> list[int]:
+    def _build_prompt_ids(
+            self,
+            user_prompt: str,
+            verbose: bool = False) -> list[int]:
         """Builds the token ID sequence for the full prompt.
 
         Formats the prompt in ChatML style with function signatures and
@@ -202,14 +238,17 @@ class Model():
 
         Args:
             user_prompt: The natural language prompt from the user.
+            verbose: If True, uses verbose function signatures including
+                descriptions.
 
         Returns:
             A list of token IDs representing the full prompt.
         """
+        sigs = self._fn_sigs_str_verbose if verbose else self._fn_sigs_str
         prompt = (
             f"<|im_start|>system find the correct function call and re"
             f"arguments\n"
-            f"{self._fn_sigs_str}\n"
+            f"{sigs}\n"
             f"{user_prompt}<|im_end|>\n"
             f"<|im_start|>assistant\n"
             f"<tool_call>\n\n</tool_call>\n"
@@ -250,7 +289,9 @@ class Model():
         n_tokens = len(self._fn_tids_short[best_idx])
         confidence = scores[best_idx] / n_tokens
         if confidence < np.log(0.8):
-            raise ValueError("No function matched the prompt")
+            raise ValueError(f"No function matched the prompt " f"(best: "
+                             f"{self._fn_names[best_idx]}, confidence: "
+                             f"{confidence:.3f})")
         self._last_confidence = confidence
         return self._fn_names[best_idx]
 
@@ -303,8 +344,7 @@ class Model():
             raise ValueError(f"Failed to decode number: {generated!r}")
 
     def _decode_string(self, input_ids: list[int]) -> tuple[str, list[int]]:
-        """Decodes a string parameter by generating tokens until a closing
-        quote.
+        """Decodes a string parameter until a closing quote.
 
         Stops when an unescaped `"` or a newline is encountered. Raises if
         the token limit is reached without a proper termination.
@@ -386,8 +426,7 @@ class Model():
         return generated == "true", current_ids
 
     def choose_function_call(self, prompt: str) -> FunctionCall:
-        """Translates a natural language prompt into a structured function
-        call.
+        """Converts a natural language prompt to a structured function call.
 
         Selects the best matching function using log-probability scoring, then
         decodes each parameter using type-aware constrained decoding.
@@ -396,16 +435,21 @@ class Model():
             prompt: The natural language request to process.
 
         Returns:
-            A FunctionCall containing the function name and decoded parameters.
+            A FunctionCall containing the function name and decoded
+            parameters.
 
         Raises:
-            ValueError: If any parameter cannot be decoded within its token
-            limit.
+            ValueError: If any parameter cannot be decoded within its
+                token limit.
         """
         if self._show:
             print(f"Prompt: {prompt}")
         base_ids = self._build_prompt_ids(prompt)
-        fn_name = self._decode_fn_name(base_ids)
+        try:
+            fn_name = self._decode_fn_name(base_ids)
+        except ValueError:
+            verbose_ids = self._build_prompt_ids(prompt, verbose=True)
+            fn_name = self._decode_fn_name(verbose_ids)
         fn_def = self._fn_lookup[fn_name]
         preamble_ids, param_prefix_ids = self._fn_ids[fn_name]
         input_ids = base_ids + preamble_ids
@@ -442,8 +486,20 @@ class Model():
                     )
                 ):
                     value = ""
+                if isinstance(value, str) and "'" in value:
+                    normalized = value.replace("'", '"')
+                    if normalized in prompt:
+                        value = normalized
+                if isinstance(value, str) and ": " in prompt:
+                    sep = prompt.index(": ") + 2
+                    if value.startswith(prompt[:sep]):
+                        value = value[sep:]
             parameters[param_name] = value
 
+        if parameters and not any(
+            self._value_in_prompt(v, prompt) for v in parameters.values()
+        ):
+            raise ValueError("No function matched the prompt")
         result = FunctionCall(name=fn_name, parameters=parameters)
         if self._show:
             print(f"  -> {fn_name}{parameters} "
