@@ -6,13 +6,13 @@
         "prompt": "What is the sum of 265 and 345?"
     },
     {
-        "prompt": "Greet shrek"
+        "prompt": "Greet "
     },
     {
         "prompt": "Greet john"
     },
     {
-        "prompt": "Reverse the string 'hello'"
+        "prompt": "Reverse the string ''"
     },
     {
         "prompt": "Reverse the string 'world'"
@@ -30,6 +30,6 @@
         "prompt": "Replace all vowels in 'Programming is fun' with asterisks"
     },
     {
-        "prompt": "Substitute the word 'cat' with 'dog' in 'The cat sat on the mat with another cat'"
+        "prompt": "Substitute the word 'cat' with 'dog' in ''"
     }
 ]

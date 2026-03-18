@@ -1,7 +1,4 @@
-.PHONY: install run debug clean lint lint-strict
-
-install:
-	uv sync
+.PHONY: run install debug clean lint lint-strict
 
 INPUT     ?= data/input/function_calling_tests.json
 OUTPUT    ?= data/output/function_calling_results.json
@@ -9,6 +6,9 @@ FUNCTIONS ?= data/input/functions_definition.json
 
 run:
 	uv run python -m src --input $(INPUT) --output $(OUTPUT) --functions_definition $(FUNCTIONS)
+
+install:
+	uv sync
 
 debug:
 	uv run python -m pdb -m src --input $(INPUT) --output $(OUTPUT) --functions_definition $(FUNCTIONS)

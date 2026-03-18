@@ -1,5 +1,6 @@
 import json
 import numpy as np
+
 from pydantic import BaseModel, validate_call
 
 from llm_sdk import Small_LLM_Model
@@ -499,7 +500,14 @@ class Model():
         if parameters and not any(
             self._value_in_prompt(v, prompt) for v in parameters.values()
         ):
-            raise ValueError("No function matched the prompt")
+            parts = fn_name.split('_')
+            fn_tokens = [t for t in parts if t and t.lower() != 'fn']
+            cleaned = ''.join(
+                c if c.isalnum() else ' ' for c in prompt.lower()
+            )
+            prompt_words = set(cleaned.split())
+            if not any(tok.lower() in prompt_words for tok in fn_tokens):
+                raise ValueError("No function matched the prompt")
         result = FunctionCall(name=fn_name, parameters=parameters)
         if self._show:
             print(f"  -> {fn_name}{parameters} "
