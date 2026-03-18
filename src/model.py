@@ -15,7 +15,7 @@ class FunctionCall(BaseModel):
     """
 
     name: str
-    parameters: dict[str, str | float | bool]
+    parameters: dict[str, str | float | int | bool]
 
 
 class Model():
@@ -340,7 +340,11 @@ class Model():
             current_ids.append(best_id)
         if not terminated:
             raise ValueError(f"String decode hit token limit: {generated!r}")
-        return generated.strip(), current_ids
+        try:
+            unescaped = json.loads('"' + generated + '"')
+        except json.JSONDecodeError:
+            unescaped = generated
+        return unescaped.strip(), current_ids
 
     def _decode_boolean(self, input_ids: list[int]) -> tuple[bool, list[int]]:
         """Decodes a boolean parameter constrained to 'true' or 'false'.
@@ -411,9 +415,11 @@ class Model():
                 fn_def.parameters.items(), param_prefix_ids):
             input_ids = input_ids + prefix_ids
             param_type = param_info.get("type", "string")
-            value: str | float | bool
-            if param_type == "number":
+            value: str | float | int | bool
+            if param_type in ("number", "integer"):
                 value, input_ids = self._decode_number(input_ids)
+                if param_type == "integer":
+                    value = int(value)
             elif param_type == "boolean":
                 value, input_ids = self._decode_boolean(input_ids)
             else:

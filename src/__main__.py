@@ -37,7 +37,6 @@ def main() -> None:
             os.makedirs(dir_name, exist_ok=True)
         with open(output_path, "w") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
-        print(f"Output written to: {output_path}")
     except Exception as e:
         print(f"Error writing output: {e}", file=stderr)
         exit(1)

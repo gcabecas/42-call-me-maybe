@@ -36,7 +36,8 @@ class FunctionDefinition(BaseModel):
     def validate_parameter_types(
         cls, v: dict[str, dict[str, str]]
     ) -> dict[str, dict[str, str]]:
-        valid_types = {"string", "number", "boolean"}
+        valid_types = {"string", "number", "boolean", "integer", "array",
+                       "object"}
         for param_name, param_info in v.items():
             t = param_info.get('type', 'string')
             if t not in valid_types:
